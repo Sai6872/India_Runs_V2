@@ -102,8 +102,8 @@ Optional flags: `--top-n` (default 100), `--batch-size` (default 128).
 
 Runs CPU-only, no GPU, no hosted APIs. Embedding batch size and document
 truncation (`config.MAX_DOCUMENT_CHARS`) are tuned to keep the full
-100K-candidate pipeline within the competition's 5-minute / 16 GB budget
-on a standard laptop-class CPU.
+100K-candidate pipeline. 
+Designed for CPU-only execution with memory usage below the 16 GB limit. The current implementation prioritizes ranking quality using semantic embeddings and a hybrid scoring strategy. Runtime optimization through accelerated embedding inference is identified as future work.
 
 ## Testing checklist
 
