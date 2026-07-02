@@ -1,11 +1,5 @@
 """
 Structured feature engineering.
-
-Extracts technical, career, and keyword-based features from each
-candidate's profile that go beyond what semantic embedding similarity
-can capture on its own (skill coverage, seniority/tenure patterns,
-disqualifying career traits called out explicitly in the JD, location
-fit, and honeypot suspicion).
 """
 
 from __future__ import annotations
@@ -21,20 +15,16 @@ logger = utils.get_logger(__name__)
 
 @dataclass
 class CandidateFeatures:
-    """Structured features derived from one candidate profile."""
-
     candidate_id: str
 
-    # --- skills ---
     must_have_group_hits: dict[str, bool] = field(default_factory=dict)
-    must_have_coverage: float = 0.0          # fraction of must-have groups matched
+    must_have_coverage: float = 0.0
     nice_to_have_coverage: float = 0.0
-    implicit_ranking_signal: bool = False     # recsys/search/NLP experience without exact keywords
+    implicit_ranking_signal: bool = False
     production_ml_evidence: bool = False
-    python_strength: float = 0.0              # 0-1, blends skill proficiency + mentions
-    skills_score: float = 0.0                 # 0-1 combined technical score
+    python_strength: float = 0.0
+    skills_score: float = 0.0
 
-    # --- career ---
     years_of_experience: float = 0.0
     in_experience_band: bool = True
     avg_tenure_months: float = 0.0
@@ -42,18 +32,15 @@ class CandidateFeatures:
     is_consulting_only: bool = False
     is_cv_speech_robotics_only: bool = False
     is_langchain_only_recent: bool = False
-    is_stale_leadership: bool = False         # senior title, no recent hands-on code
+    is_stale_leadership: bool = False
     is_research_only: bool = False
-    career_score: float = 0.0                 # 0-1 combined career score
+    career_score: float = 0.0
 
-    # --- location ---
-    location_fit: float = 0.0                 # 0-1
+    location_fit: float = 0.0
 
-    # --- honeypot suspicion ---
-    honeypot_suspicion_score: float = 0.0      # 0-1, higher = more likely a trap profile
+    honeypot_suspicion_score: float = 0.0
     honeypot_reasons: list[str] = field(default_factory=list)
 
-    # --- penalties/bonuses summary (populated fully in scorer.py, seeded here) ---
     disqualifier_count: int = 0
 
 
@@ -63,7 +50,6 @@ def _skills_text(candidate: dict[str, Any]) -> str:
 
 
 def _full_text(candidate: dict[str, Any], document: str | None = None) -> str:
-    """All free text available for a candidate, lowercased for keyword search."""
     if document:
         return document.lower()
     profile = candidate.get("profile", {}) or {}
@@ -78,8 +64,6 @@ def _full_text(candidate: dict[str, Any], document: str | None = None) -> str:
 
 
 def _extract_skill_features(candidate: dict[str, Any], text: str) -> tuple[dict[str, bool], float, float, bool, bool, float]:
-    """Returns (must_have_hits, must_have_coverage, nice_to_have_coverage,
-    implicit_ranking_signal, production_ml_evidence, python_strength)."""
     skills_text = _skills_text(candidate)
     combined_text = text + " " + skills_text
 
@@ -102,13 +86,13 @@ def _extract_skill_features(candidate: dict[str, Any], text: str) -> tuple[dict[
     for skill in candidate.get("skills", []) or []:
         if skill.get("name", "").strip().lower() == "python":
             proficiency_scores = {"beginner": 0.25, "intermediate": 0.55, "advanced": 0.8, "expert": 1.0}
-            python_strength = proficiency_scores.get(skill.get("proficiency", ""), 0.4)
+            python_strength = proficiency_scores.get(skill.get("proficiency", "").lower(), 0.4)
             duration = skill.get("duration_months") or 0
-            # Long real-world usage nudges the score up a bit, capped at 1.0.
             python_strength = utils.clamp(python_strength + min(duration / 240.0, 0.15))
             break
-    if python_strength == 0.0 and "python" in combined_text:
-        python_strength = 0.4  # mentioned in text/career but not a listed skill
+            
+    if python_strength == 0.0 and utils.contains_any(combined_text, ["python"]):
+        python_strength = 0.4  
 
     return (
         must_have_hits, must_have_coverage, nice_to_have_coverage,
@@ -162,14 +146,23 @@ def _is_stale_leadership(profile: dict[str, Any], career_history: list[dict[str,
 
 
 def _is_langchain_only_recent(career_history: list[dict[str, Any]], years_of_experience: float) -> bool:
-    """True if AI experience looks like < 12 months of LangChain-only work
-    with no deeper pre-LLM-era production ML evidence."""
-    recent_entries = [e for e in (career_history or [])[:2]]  # most recent roles first assumed
+    if not career_history:
+        return False
+        
+    sorted_history = sorted(
+        career_history, 
+        key=lambda x: x.get("start_date", ""), 
+        reverse=True
+    )
+    
+    recent_entries = sorted_history[:2]
     recent_text = " ".join(e.get("description", "") for e in recent_entries).lower()
     has_langchain_recent = utils.contains_any(recent_text, config.LANGCHAIN_ONLY_SIGNALS)
+    
     if not has_langchain_recent:
         return False
-    older_entries = (career_history or [])[2:]
+        
+    older_entries = sorted_history[2:]
     older_text = " ".join(e.get("description", "") for e in older_entries).lower()
     has_deep_prior_ml = utils.contains_any(
         older_text, config.PRODUCTION_ML_SIGNALS + ["machine learning", "ml pipeline", "recommendation"]
@@ -195,16 +188,10 @@ def _location_fit(profile: dict[str, Any]) -> float:
         return 0.85
     if config.PREFERRED_COUNTRY in country:
         return 0.6
-    return 0.35  # outside India: JD says case-by-case, no visa sponsorship
+    return 0.35
 
 
 def _honeypot_suspicion(candidate: dict[str, Any]) -> tuple[float, list[str]]:
-    """Cheap, explainable heuristics that flag "subtly impossible" profiles.
-
-    This mirrors the JD's honeypot description (e.g. "expert" proficiency
-    in many skills with ~0 months of use, or career tenure summing to
-    more than the candidate's stated total years of experience).
-    """
     reasons: list[str] = []
     score = 0.0
 
@@ -237,21 +224,6 @@ def _honeypot_suspicion(candidate: dict[str, Any]) -> tuple[float, list[str]]:
 
 
 def extract_features(candidate: dict[str, Any], document: str | None = None) -> CandidateFeatures:
-    """Extract all structured features for one candidate.
-
-    Parameters
-    ----------
-    candidate:
-        Raw candidate JSON record.
-    document:
-        Optional pre-built candidate document (from
-        ``preprocess.build_candidate_document``) to avoid recomputation.
-
-    Returns
-    -------
-    CandidateFeatures
-        Populated structured feature set for downstream scoring.
-    """
     candidate_id = candidate.get("candidate_id", "")
     profile = candidate.get("profile", {}) or {}
     career_history = candidate.get("career_history", []) or []
@@ -285,7 +257,6 @@ def extract_features(candidate: dict[str, Any], document: str | None = None) -> 
         is_stale_leadership, is_research_only,
     ])
 
-    # --- combined skills score (0-1) ---
     skills_score = utils.clamp(
         0.55 * must_have_coverage
         + 0.15 * nice_to_have_coverage
@@ -294,10 +265,8 @@ def extract_features(candidate: dict[str, Any], document: str | None = None) -> 
         + 0.05 * float(production_ml_evidence)
     )
 
-    # --- combined career score (0-1) ---
     career_score = 1.0
     if not in_experience_band:
-        # Gradual taper rather than a hard cutoff, per the JD's own framing.
         distance = min(abs(years_of_experience - lower_band), abs(years_of_experience - upper_band))
         career_score -= utils.minmax_normalize(distance, 0, config.JD_EXPERIENCE_SOFT_MARGIN_YEARS) * 0.4
     career_score -= 0.15 * float(is_title_chaser)
@@ -336,25 +305,3 @@ def extract_features(candidate: dict[str, Any], document: str | None = None) -> 
         honeypot_reasons=honeypot_reasons,
         disqualifier_count=disqualifier_count,
     )
-
-
-def fuzzy_skill_match(candidate_skill: str, jd_keyword: str, threshold: int = 85) -> bool:
-    """Fuzzy string match a candidate's listed skill against a JD keyword.
-
-    Useful for catching near-miss spellings (e.g. "Sentence Transformer"
-    vs "sentence-transformers") that exact substring matching would miss.
-
-    Parameters
-    ----------
-    candidate_skill, jd_keyword:
-        Raw skill / keyword strings to compare.
-    threshold:
-        Minimum RapidFuzz partial-ratio score (0-100) to count as a match.
-
-    Returns
-    -------
-    bool
-    """
-    from rapidfuzz import fuzz  # imported lazily so the module loads even if unused
-
-    return fuzz.partial_ratio(candidate_skill.lower(), jd_keyword.lower()) >= threshold

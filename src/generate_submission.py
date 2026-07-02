@@ -1,9 +1,5 @@
 """
 Submission generation: factual reasoning text + final CSV writer.
-
-Reasoning is built entirely from facts already present in the
-candidate's own profile and computed features/scores - never invented -
-per ``submission_spec.md`` Section 3 ("No hallucination").
 """
 
 from __future__ import annotations
@@ -30,7 +26,6 @@ def _positive_fact(
     profile: dict[str, Any],
     features: CandidateFeatures,
 ) -> str:
-    """One sentence describing why the candidate fits, grounded in real facts."""
     title = profile.get("current_title", "").strip()
     company = profile.get("current_company", "").strip()
     years = features.years_of_experience
@@ -60,15 +55,18 @@ def _concern_or_highlight(
     behavior: BehaviorFeatures,
     score: CandidateScore,
 ) -> str | None:
-    """One optional sentence: a concrete concern if one exists, otherwise a behavioral highlight."""
     if score.penalty_reasons:
         return "Concern: " + score.penalty_reasons[0] + "."
     if behavior.is_stale:
         return "Concern: has been inactive on the platform recently, so availability is uncertain."
     if behavior.behavior_score >= 0.65:
         return "Strong platform engagement (recruiter response and interview follow-through) supports genuine availability."
-    if features.location_fit >= 0.85:
+        
+    if features.location_fit == 1.0:
         return "Based in the JD's preferred Pune/Noida hub, which helps with in-person cadence."
+    if features.location_fit >= 0.85:
+        return "Based in an acceptable Tier-1 tech city."
+        
     return None
 
 
@@ -78,25 +76,6 @@ def generate_reasoning(
     behavior: BehaviorFeatures,
     score: CandidateScore,
 ) -> str:
-    """Compose a 1-2 sentence, fact-grounded reasoning string for one candidate.
-
-    Parameters
-    ----------
-    candidate:
-        Raw candidate JSON record (used for profile facts only).
-    features:
-        Structured features from :mod:`feature_engineering`.
-    behavior:
-        Behavioral score breakdown from :mod:`behavior_score`.
-    score:
-        Final hybrid score breakdown from :mod:`scorer`.
-
-    Returns
-    -------
-    str
-        A 1-2 sentence reasoning string containing only facts drawn from
-        the candidate's own profile and computed scores.
-    """
     profile = candidate.get("profile", {}) or {}
 
     sentence_one = _positive_fact(profile, features)
@@ -115,21 +94,6 @@ def build_submission_rows(
     features_by_id: dict[str, CandidateFeatures],
     behavior_by_id: dict[str, BehaviorFeatures],
 ) -> list[dict[str, Any]]:
-    """Assemble the final list of CSV row dicts from ranked scores.
-
-    Parameters
-    ----------
-    ranked_scores:
-        Output of ``rank.rank_candidates`` - already sorted, rank 1 first.
-    candidates_by_id, features_by_id, behavior_by_id:
-        Lookup dicts keyed by candidate_id, used to ground the reasoning
-        text in real profile facts.
-
-    Returns
-    -------
-    list[dict]
-        Rows with keys matching ``CSV_COLUMNS``, in rank order.
-    """
     rows = []
     for rank, score in enumerate(ranked_scores, start=1):
         candidate = candidates_by_id.get(score.candidate_id, {})
@@ -156,31 +120,6 @@ def write_submission_csv(
     path: str | Path = config.SUBMISSION_CSV,
     expected_rows: int = config.TOP_N,
 ) -> Path:
-    """Write submission rows to a UTF-8 CSV matching ``submission_spec.md`` exactly.
-
-    Parameters
-    ----------
-    rows:
-        Output of :func:`build_submission_rows`, already in rank order.
-    path:
-        Output CSV path. Defaults to ``config.SUBMISSION_CSV``.
-    expected_rows:
-        Exact row count required (default: ``config.TOP_N`` == 100, per
-        the competition spec). Lower this only for local smoke tests on
-        a smaller candidate pool.
-
-    Returns
-    -------
-    Path
-        The path the CSV was written to.
-
-    Raises
-    ------
-    ValueError
-        If the rows don't satisfy the submission spec's format rules
-        (exactly ``expected_rows`` rows, unique sequential ranks, unique
-        candidate_ids, non-increasing scores).
-    """
     _validate_rows(rows, expected_rows=expected_rows)
 
     output_path = Path(path)
@@ -196,7 +135,6 @@ def write_submission_csv(
 
 
 def _validate_rows(rows: list[dict[str, Any]], expected_rows: int = config.TOP_N) -> None:
-    """Validate submission rows against the mandatory format rules before writing."""
     if len(rows) != expected_rows:
         raise ValueError(f"Expected exactly {expected_rows} rows, got {len(rows)}")
 

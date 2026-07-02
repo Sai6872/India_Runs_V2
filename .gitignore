@@ -1,29 +1,14 @@
-# Virtual environment
+# Virtual Environment
 venv/
+env/
 
-# Downloaded models
-models/
-
-# Python cache
+# Python Cache
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
 
-# Outputs
+# Data and Outputs (Too large for GitHub)
+data/
 outputs/
-*.log
 
-# Large competition dataset
-data/candidates.jsonl
-
-# IDE settings
-.idea/
-.vscode/
-
-# Environment files
-.env
-
-# OS files
+# OS Files
 .DS_Store
-Thumbs.db

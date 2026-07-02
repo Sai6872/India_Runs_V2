@@ -1,9 +1,5 @@
 """
 Hybrid scorer.
-
-Combines semantic similarity, technical/skills features, career
-features, behavioral score, and a penalties/bonuses term into a single
-final score per candidate, using the weights defined in ``config.py``.
 """
 
 from __future__ import annotations
@@ -20,9 +16,6 @@ logger = utils.get_logger(__name__)
 
 @dataclass
 class CandidateScore:
-    """Final hybrid score for one candidate, with component breakdown retained
-    for reasoning generation and debugging."""
-
     candidate_id: str
     semantic_score: float
     skills_score: float
@@ -39,12 +32,6 @@ def _penalty_bonus_term(
     features: CandidateFeatures,
     behavior: BehaviorFeatures,
 ) -> tuple[float, list[str], list[str]]:
-    """Compute the penalties/bonuses component (0-1) plus human-readable reasons.
-
-    Starts at a neutral 0.5 and is nudged up for bonuses (location fit,
-    strong verification, low notice period) and down for JD-defined
-    disqualifiers and honeypot suspicion.
-    """
     score = 0.5
     penalty_reasons: list[str] = []
     bonus_reasons: list[str] = []
@@ -80,9 +67,19 @@ def _penalty_bonus_term(
         score -= 0.6
         penalty_reasons.append("profile shows internally inconsistent facts")
 
-    if features.location_fit >= 0.85:
+    if features.location_fit == 1.0:
         score += 0.10
-        bonus_reasons.append("based in or near the JD's preferred Pune/Noida hub")
+        bonus_reasons.append("based in the JD's preferred hub (Pune/Noida)")
+    elif features.location_fit >= 0.85:
+        score += 0.05
+        bonus_reasons.append("based in an acceptable Tier-1 tech city")
+    elif features.location_fit >= 0.60:
+        score += 0.02
+        bonus_reasons.append("located in an acceptable region")
+    elif features.location_fit < 0.50:
+        score -= 0.05
+        penalty_reasons.append("located outside preferred country (visa sponsorship unlikely)")
+
     if features.implicit_ranking_signal and features.skills_score >= 0.4:
         score += 0.05
         bonus_reasons.append("has ranking/retrieval/search substance beyond keyword matches")
@@ -99,25 +96,6 @@ def compute_final_score(
     features: CandidateFeatures,
     behavior: BehaviorFeatures,
 ) -> CandidateScore:
-    """Combine all signals into one final hybrid score for a candidate.
-
-    Parameters
-    ----------
-    candidate_id:
-        The candidate's ID.
-    semantic_similarity:
-        Cosine similarity between the candidate document and the JD,
-        typically in ``[0, 1]``.
-    features:
-        Structured features from :func:`feature_engineering.extract_features`.
-    behavior:
-        Behavioral score from :func:`behavior_score.compute_behavior_score`.
-
-    Returns
-    -------
-    CandidateScore
-        Final weighted score plus a component breakdown.
-    """
     semantic_score = utils.clamp(semantic_similarity)
     penalty_bonus_score, penalty_reasons, bonus_reasons = _penalty_bonus_term(features, behavior)
     honeypot_flag = features.honeypot_suspicion_score >= 0.5
@@ -131,8 +109,6 @@ def compute_final_score(
         + weights["penalty_bonus"] * penalty_bonus_score
     )
 
-    # Honeypots are further hard-suppressed on top of the penalty term so a
-    # single high semantic score can't accidentally carry one into the top 100.
     if honeypot_flag:
         final_score *= 0.3
 
@@ -158,22 +134,6 @@ def score_candidates(
     features_by_id: dict[str, CandidateFeatures],
     behavior_by_id: dict[str, BehaviorFeatures],
 ) -> list[CandidateScore]:
-    """Vectorized-friendly batch wrapper around :func:`compute_final_score`.
-
-    Parameters
-    ----------
-    candidate_ids:
-        Ordered list of candidate IDs, aligned with ``semantic_similarities``.
-    semantic_similarities:
-        Array-like of cosine similarities, same order/length as ``candidate_ids``.
-    features_by_id, behavior_by_id:
-        Lookup dicts keyed by candidate_id.
-
-    Returns
-    -------
-    list[CandidateScore]
-        One score object per candidate, in the same order as ``candidate_ids``.
-    """
     scores = []
     missing = 0
     for candidate_id, similarity in zip(candidate_ids, semantic_similarities):
