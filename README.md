@@ -114,3 +114,4 @@ Designed for CPU-only execution with memory usage below the 16 GB limit. The cur
 - [x] Top 100 selected with deterministic tie-breaking
 - [x] CSV generated matching `submission_spec.md` exactly
 - [x] Validator (`_validate_rows` in `generate_submission.py`) passes
+- [x] Explainable ranking generated for every selected candidate
